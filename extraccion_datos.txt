@@ -1,0 +1,85 @@
+ANÁLISIS PROFUNDO DEL NOTEBOOK "extraccion_datos.ipynb"
+
+Este documento detalla exhaustivamente todos los procesos, transformaciones y algoritmos que de desarrollan en el notebook principal de extracción, procesamiento y predicción "extraccion_datos.ipynb" dentro del flujo del TFG.
+
+El notebook tiene como meta principal procesar el historial diario consolidado de mercado (tanto variables de las criptomonedas como métricas tradicionales), realizar ingeniería de características para generar nuevos indicadores, y finalmente construir y evaluar un modelo Deep Learning (Redes Neuronales LSTM) capaz de predecir el precio futuro de Ethereum (eth_close).
+
+Se divide en las siguientes etapas fundamentales:
+
+==================================================
+1. CARGA INICIAL Y CONFIGURACIÓN DE DATOS
+==================================================
+El proceso comienza importando librerías clave de Data Science (Pandas, Numpy, Scikit-Learn) y Deep Learning (PyTorch). 
+Se lee el dataset maestro "df_merged.csv", tomando la columna de fecha (`date`) como índice de la serie temporal.
+
+Inmediatamente se efectúa una inspección de calidad sobre el DataFrame crudo `df_raw`:
+- Se comprueba la dimensión (número de filas y columnas) para el rango de fechas disponible.
+- Se hace un conteo de valores nulos (NaN) por columna y se revisan los tipos de datos (dtypes) para asegurar la integridad de la información antes de aplicar cálculos matemáticos.
+
+==================================================
+2. INGENIERÍA DE CARACTERÍSTICAS (FEATURE ENGINEERING)
+==================================================
+Antes de reducir el ruido unificando los datos en temporalidades mayores, el notebook calcula "indicadores técnicos avanzados" aprovechando la máxima resolución temporal (los datos diarios). Esto se lleva a cabo mediante la función `add_core_indicators`. 
+
+Los indicadores programados se agrupan en distintas categorías:
+- Sobrecompra/Sobreventa:
+  - RSI(14) (Relative Strength Index): Índice suavizado de fuerzas de pérdidas y ganancias. Se utiliza como oscilador de los excesos de mercado.
+  - Stochastic %K(14): Determina en qué punto del rango reciente está cerrando el precio.
+
+- Volatilidad:
+  - ATR% (Average True Range): Calculado en porcentaje para normalizar e indicar qué tan violenta está siendo la acción de precio.
+  - Bollinger Bands Width (bb_width): Proximidad o compresión de precios estadística apoyada en desviaciones típicas sobre promedios móviles a 20 días.
+
+- Momentum y Tendencia:
+  - MACD Histogram: Derivado de las medias móviles exponenciales a 12 y 26 periodos, con línea de señal a 9 periodos. Sirve para detectar impulsos alcistas y cruces de convergencia.
+  - ADX(14) (Average Directional Index): Cuantifica la fuerza intrínseca de una tendencia (sea bajista o alcista).
+
+Se realiza paralelamente el tratamiento de factores de comportamiento:
+- One-Hot Encoding (OHE) a `FearGreed_Label`: Transforma los estados de sentimiento categóricos (Miedo Extremo, Avaricia, etc.) en variables binarias (0 y 1). Esto es de vital importancia computacional porque las redes LSTM no "entienden" palabras categóricas, pero sí tensores numéricos puros.
+
+==================================================
+3. REMUESTREO TEMPORAL (RESAMPLING) Y AGRUPACIÓN
+==================================================
+Con las nuevas variables computadas, el notebook permite configurar un filtro de ventana temporal agrupando las secuencias, por ejemplo semanalmente o cada 5 días. Este "resampling" aísla el ruido intradía tan común en las criptomonedas y estabiliza el modelo de predicción.
+
+Existen reglas lógicas estrictas para esta agregación:
+- Columnas de OHLCV (Precios y Volumen): Se procesan manteniendo la coherencia financiera. En una ventana agregada de 5 días, el punto de Apertura ('first') es el primer día, el Más Alto ('max') es el máximo de esa franja, el Mínimo ('min') es el valor mínimo de la ventana, el Cierre ('last') pertenece al último día y el Volumen es la suma de los 5 días.
+- Variables OHE de Sentimiento: Se "suman". El significado resultante representa "el número exacto de días" de esa semana en los que el mercado estuvo en determinado estado (p.ej. número de días de pánico).
+- Indicadores técnicos: Al estar precalculados sobre la serie diaria histórica de *roll*, el DataFrame agrupado toma lógicamente el último valor (`'last'`) para reflejar el estado técnico a final de ese periodo.
+
+==================================================
+4. ANÁLISIS DE CORRELACIÓN Y REDUCCIÓN DE REDUNDANCIA
+==================================================
+Una máquina alimentada con datos cuasi-idénticos pierde rendimiento, de modo que el dataset agregado (`df_weekly` o ajustado a la frecuencia) se evalúa matricialmente.
+- Genera una matriz de correlación numérica. 
+- Filtra ("dropea") todas la variables independientes que presenten una redundancia algorítmica superior al 0.97 absoluto (`|corr| >= 0.97`). Esto previene el sobreajuste y la multicolinealidad.
+- Se impone la condición obligatoria de preservar el TARGET (`eth_close`), no permitiendo que el predictor quede descartado independientemente de sus correlaciones, cumpliendo así el eje vertebral de la predicción requerida.
+
+==================================================
+5. PREPARACIÓN DE ENTRADAS PARA DEEP LEARNING (LSTM)
+==================================================
+Se escogen explícitamente las columnas características de la señal `FEATURE_COLS` (volúmenes de BTC y ETH, RSI, MACD, ADX, métricas Macro de los EE.UU. como inflación/tasas, índices de dominancia) cerciorándose siempre de sustraer `eth_close` del conjunto "X" (input de entrenamiento). 
+
+- Escalado Normalizado: Los tensores se pasan por un `MinMaxScaler()`, contrayendo los números financieros (de miles o decimales microscopicos) a rangos limpios entre 0 y 1, separados conceptualmente para Features (`scaler_X`) y Target (`scaler_y`) para poder luego desescalar las predicciones.
+- Secuenciado (Sliding Window): En este punto clave, un bloque secuencial agrupa `SEQ_LEN = 18` ventanas cronológicas empaquetadas consecutivamente para inferir el target posterior, simulando así la retención de memoria de las redes LSTM sobre la acción del precio temporal.
+
+==================================================
+6. ARQUITECTURA, ENTRENAMIENTO Y EVALUACIÓN DEL MODELO
+==================================================
+Implementado bajo la infraestructura PyTorch, construyendo los DataLoaders (Train/Test splits), unificados a una clase `CryptoDataset` orientada a tensores acelerados en GPU mediante CUDA.
+
+- Arquitectura del Modelo (`StackedLSTM`): Emplea tres capas recursivas empotradas bidimensionalmente, modeladas por `LAYER_SIZES` (usualmente 32 iteraciones iniciales, ampliada a 64 mapeos ocultos y reducida de nuevo a 32 en su bloque final). Se establece un paracaídas de Dropout (0.2) en el "forward pass" logrando desensibilizar a neuronas sobre-ajustadas, remarcando la salida escalar a 1 neurona (el precio predeterminado para `t+1`).
+
+- Fase de Entrenamiento (Training Loop): 
+  Iterado sobre 5000 estimaciones de época (`EPOCHS`), regido por el algoritmo optimizador Adam corriendo a `1e-4` sobre cálculos de validación regular.
+  Un concepto vital inyectado en el script es el "Early Stopping" (con paciencia de 300). Este sistema audita la curva de validación iterativa, paralizando el entrenamiento para salvar el peso global (`best_state`) en las épocas de pérdida neta mínima, blindando al sistema matemáticamente de memorizar los datos crudos (overfitting).
+
+- Evaluación y Visualización de Pérdidas (Loss Metrics):
+  En su tramo final desescala todos los vectores de predicción y los coteja contra datos reales de mercado. Emite métricas fiables de negocio: 
+  - MAE (En dólares crudos americanos sueltos) -> Mean Absolute Error
+  - RMSE (Medida penalizada bajo error cuadrado) -> Root Mean Square Error
+  - MAPE (Porcentaje exacto de distorsión promedio) -> Mean Absolute Percentage Error
+
+Finalmente dibuja una gráfica compuesta mostrando:
+1. La convergencia natural cruzada de la curva del Train Loss vs Validation Loss, exhibiendo con una línea punteada el punto exacto donde la máquina detuvo su aprendizaje por saturación de mejora (Early Stopping point).
+2. Trazado cruzado predictivo real donde se mapean, gráficamente a lo largo de las fechas, los predictores (el pulso generado por la LSTM) simulados sobre el test set, comparándolos contra la curva auténtica del mercado.

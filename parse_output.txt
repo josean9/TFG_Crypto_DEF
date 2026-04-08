@@ -1,0 +1,220 @@
+
+--- Cell 0 (code) ---
+import pandas as pd
+import numpy as np
+import math
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import accuracy_score
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+from collections import defaultdict
+
+pd.set_option("display.max_columns", None)
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Dispositivo: {DEVICE}")
+
+--- Cell 1 (code) ---
+RUTA_CSV = "../data/csv/df_merged.csv"
+
+df_raw = pd.read_csv(RUTA_CSV, parse_dates=["date"], index_col="date")
+df_raw.sort_index(inplace=True)
+
+df_raw.head()
+
+--- Cell 2 (code) ---
+
+# OHE de FearGreed_Label
+if "FearGreed_Label" in df_raw.columns:
+    ohe = pd.get_dummies(df_raw["FearGreed_Label"], prefix="fng", dtype=int)
+    ohe.columns = [c.replace(" ", "_") for c in ohe.columns]
+    df_raw = df_raw.drop(columns=["FearGreed_Label"]).join(ohe)
+
+OHE_COLS = [c for c in df_raw.columns
+            if c.startswith("fng_") and c != "fng_scaled"]
+
+print(f"Shape raw: {df_raw.shape}")
+print(f"Rango: {df_raw.index.min().date()} → {df_raw.index.max().date()}")
+print(f"OHE cols: {OHE_COLS}")
+
+--- Cell 3 (code) ---
+df_raw.head()
+
+--- Cell 4 (code) ---
+df = df_raw.copy()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BLOQUE A — Retornos porcentuales (precios y volúmenes)
+# Fórmula: ret_t = (precio_t - precio_{t-1}) / precio_{t-1} × 100
+# Por qué: los precios son no estacionarios (crecen sin límite).
+# El retorno % sí es estacionario: oscila alrededor de 0.
+# ══════════════════════════════════════════════════════════════════════════════
+for col in ["btc_open","btc_high","btc_low","btc_close","btc_volume",
+            "eth_open","eth_high","eth_low","eth_close","eth_volume",
+            "btc_mcap","eth_mcap"]:
+    if col in df.columns:
+        df[f"{col}_ret"] = df[col].pct_change() * 100
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BLOQUE B — Diferencias en puntos
+[...]
+
+--- Cell 5 (code) ---
+def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SENTIMIENTO ACUMULADO — ventanas 15 y 30 días
+    # Fórmula: sum(ohe_col, ventana)
+    # Resultado: "en los últimos 15 días, ¿cuántos fueron de miedo extremo?"
+    # Un valor de 12/15 en Extreme_Fear es una señal muy potente de capitulación.
+    # La asimetría 15 vs 30 detecta si el miedo se está acelerando recientemente
+    # (15d > 30d/2) o si viene de antes pero se está calmando (15d < 30d/2).
+    # ══════════════════════════════════════════════════════════════════════════
+    for w in [15, 30]:
+        for col in OHE_COLS:
+            if col in df.columns:
+                df[f"{col}_sum{w}d"] = df[col].rolling(w).sum()
+
+ 
+[...]
+
+--- Cell 6 (code) ---
+df.head()
+
+--- Cell 7 (code) ---
+# ── Cell 4b: correlación predictiva (feature[t] vs target[t+lag]) ─────────────
+TARGET   = "eth_close_ret"
+features = [c for c in df.columns if c != TARGET]
+
+resultados = []
+for lag in [1, 2, 3]:
+    target_lag = df[TARGET].shift(-lag)
+    for col in features:
+        resultados.append({
+            "feature":  col,
+            "lag":      lag,
+            "corr":     df[col].corr(target_lag),
+        })
+
+df_corr = pd.DataFrame(resultados)
+df_corr["corr_abs"] = df_corr["corr"].abs()
+
+# Top 10 por cada lag
+for lag in [1, 2, 3]:
+    print(f"\n══ TOP 10 predictivas para +{lag} día(s) ══")
+    top = (df_corr[df_corr["lag"] == lag]
+           .sort_values("corr_abs", ascending=False).head(10))
+    for _, row in top.iterrows():
+        signo = "▲" if row["corr"] > 0 else "▼"
+        print(f"  {
+[...]
+
+--- Cell 8 (code) ---
+# ══════════════════════════════════════════════════════════════════════════════
+# Cell 5 — Target, parámetros globales y normalización
+# ══════════════════════════════════════════════════════════════════════════════
+TARGET_COL   = "eth_close_ret"
+SEQ_LEN      = 30
+HORIZON      = 3
+
+scaler_X = MinMaxScaler()
+scaler_y = MinMaxScaler()
+
+data_X = scaler_X.fit_transform(df_model[FEATURE_COLS])
+data_y = scaler_y.fit_transform(df_model[[TARGET_COL]])
+
+print(f"Features  : {len(FEATURE_COLS)}")
+print(f"Muestras  : {len(data_X)}")
+print(f"SEQ_LEN   : {SEQ_LEN} días  |  HORIZON: {HORIZON} días")
+
+--- Cell 9 (code) ---
+# ══════════════════════════════════════════════════════════════════════════════
+# Cell 6 — Secuencias MIMO (deslizamiento ×1 para train, split temporal)
+# ══════════════════════════════════════════════════════════════════════════════
+X_all, y_all = [], []
+for i in range(SEQ_LEN, len(data_X) - HORIZON + 1):
+    X_all.append(data_X[i - SEQ_LEN : i])
+    y_all.append(data_y[i : i + HORIZON].squeeze())
+
+X_all = np.array(X_all)   # (N, SEQ_LEN, n_features)
+y_all = np.array(y_all)   # (N, HORIZON)
+
+split   = int(len(X_all) * 0.9)
+X_train, X_test = X_all[:split], X_all[split:]
+y_train, y_test = y_all[:split], y_all[split:]
+
+print(f"Total secuencias : {len(X_all)}")
+print(f"X_train          : {X_train.shape}  →  {X_train.shape[0]} ventanas")
+print(f"X_test           : {X_test.shape}   →  {X_test.
+[...]
+
+--- Cell 10 (code) ---
+# ══════════════════════════════════════════════════════════════════════════════
+# Cell 7 — Modelos: LSTM y Transformer (misma interfaz, mismo output)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class StackedLSTM(nn.Module):
+    def __init__(self, n_features, hidden=[64, 32], dropout=0.3, horizon=3):
+        super().__init__()
+        self.lstms = nn.ModuleList()
+        in_size = n_features
+        for h in hidden:
+            self.lstms.append(
+                nn.LSTM(in_size, h, num_layers=1, batch_first=True)
+            )
+            in_size = h
+        self.dropout = nn.Dropout(dropout)
+        self.fc = nn.Sequential(
+            nn.Linear(hidden[-1], hidden[-1] // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear
+[...]
+
+--- Cell 11 (code) ---
+# ══════════════════════════════════════════════════════════════════════════════
+# Cell 8 — Entrenamiento con early stopping y scheduler
+# ══════════════════════════════════════════════════════════════════════════════
+BATCH_SIZE = 32
+EPOCHS     = 500
+LR         = 1e-3
+PATIENCE   = 60
+
+class CryptoDataset(Dataset):
+    def __init__(self, X, y):
+        self.X = torch.FloatTensor(X)
+        self.y = torch.FloatTensor(y)
+    def __len__(self):        return len(self.X)
+    def __getitem__(self, i): return self.X[i], self.y[i]
+
+train_loader = DataLoader(CryptoDataset(X_train, y_train),
+                          batch_size=BATCH_SIZE, shuffle=False)
+test_loader  = DataLoader(CryptoDataset(X_test,  y_test),
+                          batch_size=BATCH_SIZE, shuffle=False)
+
+criterion = nn.MSELoss()
+[...]
+
+--- Cell 12 (code) ---
+# ══════════════════════════════════════════════════════════════════════════════
+# Cell 9 — Evaluación con averaging (cada día predicho múltiples veces)
+# ══════════════════════════════════════════════════════════════════════════════
+model.eval()
+split_idx = split + SEQ_LEN   # primer índice real de test en data_X
+
+preds_por_dia  = defaultdict(list)
+reales_por_dia = {}
+
+with torch.no_grad():
+    for i in range(split_idx, len(data_X) - HORIZON + 1):
+        x   = torch.FloatTensor(data_X[i - SEQ_LEN : i]).unsqueeze(0).to(DEVICE)
+        pred = model(x).cpu().numpy().squeeze()
+        for h in range(HORIZON):
+            preds_por_dia[i + h].append(pred[h])
+            reales_por_dia[i + h] = data_y[i + h, 0]
+
+dias        = sorted(preds_por_dia.keys())
+preds_avg   = np.array([np.mean(preds_p
+[...]
