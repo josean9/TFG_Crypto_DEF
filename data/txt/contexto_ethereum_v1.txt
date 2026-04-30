@@ -490,7 +490,36 @@ QUE BUSCAR:
     caida de dominancia, el patron puede estar invalidado
     para este ciclo.
 
+================================================================
+BLOQUE E10. FASE DE ACUMULACION POST-MAXIMOS DE BITCOIN
+ID: E10  Evidencia: [MODERADA]   Ciclos: 2 completos
+================================================================
 
+Cuando Bitcoin ha marcado nuevo maximo historico en un ciclo y
+Ethereum NO lo ha superado en los 60 dias siguientes, el mercado
+ha entrado historicamente en una de estas dos situaciones:
+
+  E10A - Acumulacion tardia con rotacion pendiente:
+    ETH alcanza su nuevo maximo entre el dia 60 y el dia 120
+    despues del maximo de BTC. Patron observado en 2017 (27 dias)
+    y parcialmente en 2021 (mismo dia, pero con consolidacion
+    posterior).
+
+  E10B - Anomalia estructural (sin precedente claro):
+    ETH no marca nuevo maximo historico en los siguientes 6+ meses
+    tras el maximo de BTC. Es lo que ha ocurrido en el ciclo
+    2024-2026 hasta la fecha.
+
+INDICADORES PARA RAZONAR LA FASE:
+  Si han pasado entre 60 y 180 dias desde el maximo de BTC y ETH
+  sigue sin superar su ATH historico, las hipotesis posibles son:
+    1. Acumulacion previa a rally retrasado de ETH.
+    2. Debilidad estructural permanente (ver EC4).
+  Para discernir hay que mirar:
+    - Ratio ETH/BTC: si esta subiendo desde minimos, hipotesis 1.
+    - Flujos ETF de ETH: si vuelven a positivos, hipotesis 1.
+    - Si ambos siguen en zona de debilidad, hipotesis 2.
+    
 ================================================================
 BLOQUE EC. COMBINACIONES ESPECIFICAS DE ETHEREUM
 ================================================================
