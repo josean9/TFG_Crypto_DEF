@@ -1,0 +1,33 @@
+name: Actualización Diaria de Criptos
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # Corre a las 6:00 AM UTC todos los días
+  workflow_dispatch:    # Permite ejecutarlo manualmente desde la pestaña Actions
+
+jobs:
+  update-csv:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: |
+          pip install pandas requests
+
+      - name: Ejecutar script de actualización
+        run: python actualizar_datos.py
+
+      - name: Guardar cambios en el repo
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data/csv/df_merged.csv
+          git commit -m "Auto-update CSV: $(date +'%Y-%m-%d')" || echo "No hay cambios que guardar"
+          git push
