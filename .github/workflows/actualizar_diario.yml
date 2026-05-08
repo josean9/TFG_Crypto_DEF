@@ -1,33 +1,30 @@
-name: Actualización Diaria de Criptos
+name: Actualizar CSV diario
 
 on:
   schedule:
-    - cron: '0 6 * * *' # Corre a las 6:00 AM UTC todos los días
-  workflow_dispatch:    # Permite ejecutarlo manualmente desde la pestaña Actions
+    - cron: '0 9 * * *'   # 09:00 UTC todos los días
+  workflow_dispatch:       # también ejecutable a mano
 
 jobs:
-  update-csv:
+  update:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout del código
-        uses: actions/checkout@v4
-
-      - name: Configurar Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
+      
       - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      
+      - name: Ejecutar actualización
+        run: python scripts/actualizar_diario.py
+      
+      - name: Commit y push si hay cambios
         run: |
-          pip install pandas requests
-
-      - name: Ejecutar script de actualización
-        run: python actualizar_datos.py
-
-      - name: Guardar cambios en el repo
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add data/csv/df_merged.csv
-          git commit -m "Auto-update CSV: $(date +'%Y-%m-%d')" || echo "No hay cambios que guardar"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/csv/df_merged.csv data/csv/backups/
+          git diff --staged --quiet || git commit -m "Actualización CSV automática $(date +%Y-%m-%d)"
           git push
